@@ -1799,15 +1799,23 @@ function CleveRoids.ParseSequence(text)
         perTargetState = {},  -- [guid] = {index = N, lastUpdate = T} for reset=target
     }
 
-    -- fill reset rules: seconds or flags (target/combat/alt/ctrl/shift)
+    -- fill reset rules: seconds or flags (target/combat/alt/ctrl/shift/start:N)
     if resetVal then
         for _, rule in pairs(CleveRoids.Split(resetVal, "/")) do
             rule = string.lower(CleveRoids.Trim(rule))
-            local secs = tonumber(rule)
-            if secs and secs > 0 then
-                sequence.reset.secs = secs
+            -- Check for start:N syntax (reset N seconds after first cast completes)
+            local startSecs = nil
+            local _, _, sv = string.find(rule, "^start:(%d+%.?%d*)$")
+            if sv then startSecs = tonumber(sv) end
+            if startSecs and startSecs > 0 then
+                sequence.reset.startSecs = startSecs
             else
-                sequence.reset[rule] = true
+                local secs = tonumber(rule)
+                if secs and secs > 0 then
+                    sequence.reset.secs = secs
+                else
+                    sequence.reset[rule] = true
+                end
             end
         end
     end
@@ -2261,6 +2269,11 @@ function CleveRoids.AdvanceSequence(sequence)
         -- Not at the end yet, just advance normally
         local oldIndex = sequence.index
         sequence.index = sequence.index + 1
+
+        -- For reset=start:N, record when the first cast completes (advancing from step 1 to 2)
+        if oldIndex == 1 and sequence.reset and sequence.reset.startSecs then
+            sequence.startTime = GetTime()
+        end
 
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
@@ -4273,8 +4286,13 @@ function CleveRoids.OnUpdate(self)
     local Sequences = CR.Sequences
     local seqKey, sequence = next(Sequences)
     while seqKey do
-        if sequence.index > 1 and sequence.reset.secs and (time - (sequence.lastUpdate or 0)) >= sequence.reset.secs then
-            CR.ResetSequence(sequence)
+        if sequence.index > 1 then
+            if sequence.reset.startSecs and sequence.startTime and (time - sequence.startTime) >= sequence.reset.startSecs then
+                CR.ResetSequence(sequence)
+                sequence.startTime = nil
+            elseif sequence.reset.secs and (time - (sequence.lastUpdate or 0)) >= sequence.reset.secs then
+                CR.ResetSequence(sequence)
+            end
         end
         seqKey, sequence = next(Sequences, seqKey)
     end
